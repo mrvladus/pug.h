@@ -1,0 +1,4 @@
+*.o
+pug
+examples/hello-world/hello-world
+examples/incremental/incremental
