@@ -1,4 +1,3 @@
-#define PUG_IMPLEMENTATION
 #include "../../pug.h"
 
 int main(int argc, const char **argv) {
