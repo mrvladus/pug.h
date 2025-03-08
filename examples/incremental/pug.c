@@ -4,18 +4,19 @@
 // If any of the source files is changed - pug will rebuild only those files.
 
 int main(int argc, const char **argv) {
-  // Auto-rebuild pug if this file is changed
-  pug_self_rebuild();
-  // Create new executable
-  Executable incremental_exe = {
+  auto_rebuild_pug(argc, argv);
+  Exe incremental_exe = {
       .name = "incremental",
+      // Here we have multiple source files that will be tracked for changes
       .sources = SOURCES("main.c", "add.c", "subtract.c"),
+      .install_dir = env_or("BINDIR", "/usr/bin"),
   };
-  // If 1st argument is "clean" - remove all build files for this executable
-  if (argc == 2 && !strcmp(argv[1], "clean")) {
-    executable_clean(&incremental_exe);
+  if (argc == 2) {
+    if (!strcmp(argv[1], "clean"))
+      exe_clean(&incremental_exe);
+    if (!strcmp(argv[1], "install"))
+      exe_install(&incremental_exe);
     return 0;
   }
-  // Build executable
-  executable_build(&incremental_exe);
+  exe_build(&incremental_exe);
 }

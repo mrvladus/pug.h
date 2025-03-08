@@ -1,71 +1,23 @@
-/*
+// MIT Licence
 
-MIT Licence
+// Copyright 2025 Vlad Krupinskii <mrvladus@yandex.ru>
 
-Copyright 2025 Vlad Krupinskii <mrvladus@yandex.ru>
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the “Software”), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+// the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the “Software”), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
--------------------------------------------------------------------------------
-
-PUG.H is a stupidly simple build system designed for small C/C++ projects.
-It consists of a single header file that you can easily copy into your project.
-PUG.H requires only a C compiler to build itself, making it lightweight and
-straightforward to use.
-
-Here is how it works:
-- Copy pug.h to your project
-- Create your build file "pug.c"
-- Compile it with "cc -o pug pug.c"
-- Run with "./pug"
-
-Pretty simple, right?
-
--------------------------------------------------------------------------------
-
-Example "pug.c":
-
-#define CC "clang" // You can change the C compiler using this.
-                   // "gcc" is the default.
-#include "pug.h"
-
-int main(int argc, const char **argv) {
-    // Auto-rebuild pug if this file is changed
-    pug_self_rebuild();
-    // Create new executable target
-    Executable exe = {
-        .name = "example",                     // Required field
-        .sources = SOURCES("main.c", "lib.c"), // Required field
-        .cflags = "-Wall -Wextra",             // Optional field
-        .ldflags = "-lm",                      // Optional field
-    };
-
-    // Clean build files if run with "./pug clean"
-    if (argc == 2 && !strcmp(argv[1], "clean")) {
-        executable_clean(&exe);
-        return 0;
-    }
-
-    // Build it
-    executable_build(&exe);
-}
-
-*/
+// THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #ifndef __PUG_H__
 #define __PUG_H__
@@ -82,25 +34,39 @@ int main(int argc, const char **argv) {
 
 // Executable build target
 typedef struct {
-  // Executable name
+  // Executable name.
+  // Required field.
   const char *name;
-  // NULL-terminated array of strings. Use SOURCES() macro for easy creation.
+  // NULL-terminated array of strings.
+  // Use SOURCES() macro for easy creation.
+  // Required field.
   const char **sources;
-  // Compile flags
+  // Compile flags.
+  // Optional field.
   const char *cflags;
-  // Linker flags
+  // Linker flags.
+  // Optional field.
   const char *ldflags;
-} Executable;
+  // Install directory.
+  // Optional field.
+  const char *install_dir;
+} Exe;
 
 // Shortcut for setting sources of the Executable struct
-#define SOURCES(...) ((const char *[]){__VA_ARGS__, NULL})
+#define SOURCES(...)                                                                                                   \
+  (const char *[]) { __VA_ARGS__, NULL }
 
 // Build executable
-void executable_build(Executable *exe);
+void exe_build(Exe *exe);
 // Cleanup executable and its .o files
-void executable_clean(Executable *exe);
+void exe_clean(Exe *exe);
+// Install executable to its install_dir
+void exe_install(Exe *exe);
+// Get enviroment variable or default value if env variable not provided
+const char *env_or(const char *env, const char *default_val);
+
 // Checks if pug.c was changed and recompiles itself if needed
-void pug_self_rebuild(void);
+void auto_rebuild_pug(int argc, const char **argv);
 
 // ---------------------------- DECLARATIONS END ---------------------------- //
 
@@ -115,14 +81,16 @@ void pug_self_rebuild(void);
 #include <sys/stat.h>
 #ifdef _WIN32
 #define STAT _stat
+#define PATH_SEP "\\"
 #else
 #define STAT stat
+#define PATH_SEP "/"
 #endif
 
-// --- UTILS --- //
+// --- PRIVATE UTIL FUNCTIONS --- //
 
 // Log formatted message
-static inline void pug_log(const char *format, ...) {
+static inline void _log(const char *format, ...) {
   va_list args;
   printf("[PUG] ");
   va_start(args, format);
@@ -132,7 +100,7 @@ static inline void pug_log(const char *format, ...) {
 }
 
 // Get length of NULL-terminated array
-static inline size_t pug_get_array_len(const char **arr) {
+static inline size_t _get_array_len(const char **arr) {
   size_t len = 0;
   if (!arr)
     return len;
@@ -142,7 +110,7 @@ static inline size_t pug_get_array_len(const char **arr) {
 }
 
 // Allocate formatted string
-static char *pug_strdup_printf(const char *format, ...) {
+static char *_strdup_printf(const char *format, ...) {
   if (!format)
     return NULL;
   va_list args;
@@ -167,7 +135,7 @@ static char *pug_strdup_printf(const char *format, ...) {
   return buffer;
 }
 
-static inline char *pug_replace_file_extension(const char *filename, const char *new_ext) {
+static inline char *_replace_file_extension(const char *filename, const char *new_ext) {
   const char *dot = strrchr(filename, '.');
   size_t basename_len = (dot && dot != filename) ? (size_t)(dot - filename) : strlen(filename);
   // Allocate memory for new filename: basename + '.' + new_ext + '\0'
@@ -183,14 +151,14 @@ static inline char *pug_replace_file_extension(const char *filename, const char 
   return new_filename;
 }
 
-static const char *pug_get_file_extension(const char *filename) {
+static const char *_get_file_extension(const char *filename) {
   const char *dot = strrchr(filename, '.');
   if (!dot || dot == filename)
     return NULL;
   return dot + 1;
 }
 
-static bool pug_file_exists(const char *filename) {
+static bool _file_exists(const char *filename) {
   FILE *file = fopen(filename, "r");
   if (file) {
     fclose(file);
@@ -200,42 +168,60 @@ static bool pug_file_exists(const char *filename) {
 }
 
 // Check if file1 was modified after file2
-static bool pug_file_changed_after(const char *file1, const char *file2) {
+static bool _file_changed_after(const char *file1, const char *file2) {
   struct stat stat1, stat2;
   if (STAT(file1, &stat1) != 0 || STAT(file2, &stat2) != 0)
     return false; // If either file is missing, assume no change
   return stat1.st_mtime > stat2.st_mtime;
 }
 
+static char *_get_args_as_string(int argc, const char **argv) {
+  size_t total_length = 0;
+  for (int i = 0; i < argc; i++)
+    total_length += strlen(argv[i]) + 1;
+  char *full_cmdline = malloc(total_length);
+  if (!full_cmdline) {
+    _log("Can't allocate memory");
+    exit(EXIT_FAILURE);
+  }
+  full_cmdline[0] = '\0';
+  for (int i = 0; i < argc; i++) {
+    strcat(full_cmdline, argv[i]);
+    if (i != argc - 1)
+      strcat(full_cmdline, " ");
+  }
+  return full_cmdline;
+}
+
 // --- FUNCTIONS --- //
 
-void executable_build(Executable *exe) {
+void exe_build(Exe *exe) {
   // Compile source files to .o files
-  pug_log("Compiling");
-  size_t sources_len = pug_get_array_len(exe->sources);
+  _log("Compiling");
+  size_t sources_len = _get_array_len(exe->sources);
   size_t sources_str_len = 0;
   bool need_linking = false;
   for (size_t i = 0; i < sources_len; ++i) {
     const char *source = exe->sources[i];
     // Get corresponding .o file
-    char *source_obj = pug_replace_file_extension(source, "o");
+    char *source_obj = _replace_file_extension(source, "o");
     // If .o file exists and corresponding source file is newer - recompile it
     char *cmd = NULL;
     const char *cmd_f = "%s -c %s -o %s %s";
-    if (pug_file_exists(source_obj)) {
-      if (pug_file_changed_after(source, source_obj))
-        cmd = pug_strdup_printf(cmd_f, CC, exe->cflags ? exe->cflags : "", source_obj, source);
+    if (_file_exists(source_obj)) {
+      if (_file_changed_after(source, source_obj))
+        cmd = _strdup_printf(cmd_f, CC, exe->cflags ? exe->cflags : "", source_obj, source);
     }
     // If it not exists - compile it
     else
-      cmd = pug_strdup_printf(cmd_f, CC, exe->cflags ? exe->cflags : "", source_obj, source);
+      cmd = _strdup_printf(cmd_f, CC, exe->cflags ? exe->cflags : "", source_obj, source);
     if (cmd) {
-      pug_log("%s", cmd);
+      _log("%s", cmd);
       const int res = system(cmd);
       free(cmd);
       if (res != 0) {
-        pug_log("Error while compiling '%s'", source);
-        exit(1);
+        _log("Error while compiling '%s'", source);
+        exit(EXIT_FAILURE);
       }
       need_linking = true;
     }
@@ -245,39 +231,39 @@ void executable_build(Executable *exe) {
 
   // No files have changed - return
   if (!need_linking) {
-    pug_log("Nothing to compile");
+    _log("Nothing to compile");
     return;
   }
 
   // Link .o files to an executable
-  pug_log("Linking");
+  _log("Linking");
   char obj_files[sources_str_len + 1]; // +1 for the null terminator
   obj_files[0] = '\0';                 // Ensure it starts as an empty string
   // Create string with .c files changed to .o
   for (size_t i = 0; i < sources_len; ++i) {
     const char *source = exe->sources[i];
-    char *source_obj = pug_replace_file_extension(source, "o");
+    char *source_obj = _replace_file_extension(source, "o");
     strcat(obj_files, source_obj);
     strcat(obj_files, " ");
     free(source_obj);
   }
-  char *cmd = pug_strdup_printf("%s %s -o %s %s", CC, exe->ldflags ? exe->ldflags : "", exe->name, obj_files);
-  pug_log("%s", cmd);
+  char *cmd = _strdup_printf("%s %s -o %s %s", CC, exe->ldflags ? exe->ldflags : "", exe->name, obj_files);
+  _log("%s", cmd);
   const int res = system(cmd);
   free(cmd);
   if (res != 0) {
-    pug_log("Error while linking '%s'", exe->name);
-    exit(1);
+    _log("Error while linking '%s'", exe->name);
+    exit(EXIT_FAILURE);
   }
 }
 
 // Cleanup executable and its .o files
-void executable_clean(Executable *exe) {
-  pug_log("Cleanup");
+void exe_clean(Exe *exe) {
+  _log("Cleanup");
   remove(exe->name);
-  size_t sources_len = pug_get_array_len(exe->sources);
+  size_t sources_len = _get_array_len(exe->sources);
   for (size_t i = 0; i < sources_len; i++) {
-    char *obj_file = pug_replace_file_extension(exe->sources[i], "o");
+    char *obj_file = _replace_file_extension(exe->sources[i], "o");
     if (obj_file) {
       remove(obj_file);
       free(obj_file);
@@ -285,18 +271,46 @@ void executable_clean(Executable *exe) {
   }
 }
 
+// Install executable to its install_dir
+void exe_install(Exe *exe) {
+  if (!exe->install_dir) {
+    _log("'install_dir' is not defined for executable '%s'", exe->name);
+    exit(EXIT_FAILURE);
+  }
+  _log("Installing '%s' to '%s%s%s'", exe->name, exe->install_dir, PATH_SEP, exe->name);
+  char *cmd = _strdup_printf("install -D -s %s %s%s%s", exe->name, exe->install_dir, PATH_SEP, exe->name);
+  int res = system(cmd);
+  free(cmd);
+  if (res != 0) {
+    _log("Failed to install '%s'", exe->name);
+    exit(EXIT_FAILURE);
+  }
+}
+
 // Checks if pug.c was changed and recompiles itself if needed
-void pug_self_rebuild(void) {
-  if (!pug_file_changed_after("pug.c", "pug"))
+void auto_rebuild_pug(int argc, const char **argv) {
+  if (!_file_exists("pug.c")) {
+    _log("Build file not found. Make sure it's called 'pug.c'.");
+    exit(EXIT_FAILURE);
+  }
+  if (!_file_changed_after("pug.c", "pug"))
     return;
-  pug_log("Rebuilding pug");
+  _log("Rebuilding pug");
   const int res = system(CC " -o pug pug.c");
   if (res != 0) {
-    pug_log("Error rebuilding pug");
-    exit(1);
+    _log("Error rebuilding pug");
+    exit(EXIT_FAILURE);
   }
-  system("./pug");
-  exit(0);
+  char *cmd = _get_args_as_string(argc, argv);
+  system(cmd);
+  free(cmd);
+  exit(EXIT_SUCCESS);
+}
+
+// Get enviroment variable or default value if env variable not provided
+const char *env_or(const char *env, const char *default_val) {
+  const char *val = getenv(env);
+  return !val ? default_val : val;
 }
 
 // --------------------------- IMPLEMENTATION END -------------------------- //
