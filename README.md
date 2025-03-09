@@ -7,7 +7,7 @@ PUG.H requires only a C compiler to build itself, making it lightweight and stra
 ## Features
 
 - **Single Header File**: Just copy `pug.h` to your project.
-- **Super Small**: Less than 300 lines of code.
+- **Tiny**: Less than 500 lines of code.
 - **No Dependencies**: Requires only a C compiler.
 - **Easy to Use**: Simple syntax to create your builds.
 - **Incremental Builds**: PUG rebuilds only changed source files for fast incremental compilation.
@@ -30,30 +30,38 @@ Here’s a simple example of how to use PUG.H in your project:
 #include "pug.h"
 
 int main(int argc, const char **argv) {
-    // Auto-rebuild PUG if this file is changed
-    pug_self_rebuild();
-    // Create new executable target
-    Executable exe = {
-        .name = "example",                     // Required field
-        .sources = SOURCES("main.c", "lib.c"), // Required field
-        .cflags = "-Wall -Wextra",             // Optional field
-        .ldflags = "-lm",                      // Optional field
-    };
-
-    // Clean build files if run with "./pug clean"
-    if (argc == 2 && !strcmp(argv[1], "clean")) {
-        executable_clean(&exe);
-        return 0;
-    }
-
-    // Build it
-    executable_build(&exe);
+  // Auto-rebuild pug if this file is changed.
+  auto_rebuild_pug(argc, argv);
+  // Create new executable
+  Exe test_exe = {
+      // Set executable name
+      .name = "hello-world",
+      // Set list of sources for executable
+      .sources = FILES("hello-world.c"),
+      // Set install directory for compiled binary.
+      // Can be customized with enviroment variable like this: "BINDIR=/usr/bin ./pug"
+      .install_dir = env_or("BINDIR", "/usr/local/bin"),
+  };
+  // Parse args
+  if (argc == 2) {
+    // If 1st argument is "clean" - remove all build files for this executable
+    if (!strcmp(argv[1], "clean"))
+      exe_clean(&test_exe);
+    // If 1st argument is "install" - install binary to install_dir
+    if (!strcmp(argv[1], "install"))
+      exe_install(&test_exe);
+    return 0;
+  }
+  // Build executable if no args is provided
+  exe_build(&test_exe);
 }
+
 ```
 
 3. Build `pug` with `gcc -o pug pug.c`
 4. Run `./pug` to build your project
 5. Run `./pug clean` to clean up the build files
+6. Run `./pug install` to install executable
 
 ## License
 
