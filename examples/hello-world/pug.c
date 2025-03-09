@@ -9,7 +9,7 @@ int main(int argc, const char **argv) {
       // Set executable name
       .name = "hello-world",
       // Set list of sources for executable
-      .sources = SOURCES("hello-world.c"),
+      .sources = FILES("hello-world.c"),
       // Set install directory for compiled binary.
       // Can be customized with enviroment variable like this: "BINDIR=/usr/bin ./pug"
       .install_dir = env_or("BINDIR", "/usr/local/bin"),

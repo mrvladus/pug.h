@@ -8,7 +8,7 @@ int main(int argc, const char **argv) {
   Exe incremental_exe = {
       .name = "incremental",
       // Here we have multiple source files that will be tracked for changes
-      .sources = SOURCES("main.c", "add.c", "subtract.c"),
+      .sources = FILES("main.c", "add.c", "subtract.c"),
       .install_dir = env_or("BINDIR", "/usr/bin"),
   };
   if (argc == 2) {
