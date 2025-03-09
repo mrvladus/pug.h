@@ -83,6 +83,10 @@ void lib_clean(Lib *lib);
 // Install library to its install_dir and headers to their install directory
 void lib_install(Lib *lib);
 
+// Check for library using its pkg-config name
+// If required is true - exits with code 1.
+void check_library(const char *pkg_config_name, bool required);
+
 // Get environment variable or default if not defined
 const char *env_or(const char *env, const char *default_val);
 
@@ -461,6 +465,20 @@ void auto_rebuild_pug(int argc, const char **argv) {
 const char *env_or(const char *env, const char *default_val) {
   const char *val = getenv(env);
   return val ? val : default_val;
+}
+
+void check_library(const char *pkg_config_name, bool required) {
+  printf("[PUG] Checking for installed library: %s ... ", pkg_config_name);
+  char *cmd = _strdup_printf("pkg-config --exists %s", pkg_config_name);
+  int res = system(cmd);
+  free(cmd);
+  if (res == 0) {
+    printf("\033[0;32mYES\033[0m\n");
+  } else {
+    printf("\033[0;31mNO\033[0m\n");
+    if (required)
+      exit(EXIT_FAILURE);
+  }
 }
 
 // ---------------------------- IMPLEMENTATION END -------------------------- //
