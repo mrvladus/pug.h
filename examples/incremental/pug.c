@@ -3,8 +3,8 @@
 // This is example of the incremental build.
 // If any of the source files is changed - pug will rebuild only those files.
 
-int main(int argc, const char **argv) {
-  auto_rebuild_pug(argc, argv);
+int main(int argc, char **argv) {
+  pug_init(argc, argv);
   Exe incremental_exe = {
       .name = "incremental",
       // Here we have multiple source files that will be tracked for changes

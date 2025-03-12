@@ -1,9 +1,8 @@
 #include "../../pug.h"
 
-int main(int argc, const char **argv) {
-  // Auto-rebuild pug if this file is changed.
-  // Must use argc and argv to function.
-  auto_rebuild_pug(argc, argv);
+int main(int argc, char **argv) {
+  pug_init(argc, argv);
+
   // Create new executable
   Exe test_exe = {
       // Set executable name
@@ -14,16 +13,18 @@ int main(int argc, const char **argv) {
       // Can be customized with enviroment variable like this: "BINDIR=/usr/bin ./pug"
       .install_dir = env_or("BINDIR", "/usr/local/bin"),
   };
-  // Parse args
-  if (argc == 2) {
-    // If 1st argument is "clean" - remove all build files for this executable
-    if (!strcmp(argv[1], "clean"))
-      exe_clean(&test_exe);
-    // If 1st argument is "install" - install binary to ~/.local/bin
-    if (!strcmp(argv[1], "install"))
-      exe_install(&test_exe);
+  if (get_arg_bool("clean")) {
+    exe_clean(&test_exe);
     return 0;
   }
-  // Build executable if no args is provided
+  // Run if launched with "./pug run"
+  else if (get_arg_bool("run")) {
+    exe_run(&test_exe);
+    return 0;
+  }
+  // Build executable
   exe_build(&test_exe);
+  // Install if "install" argument provided
+  if (get_arg_bool("install"))
+    exe_install(&test_exe);
 }

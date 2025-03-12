@@ -22,17 +22,26 @@
 #ifndef __PUG_H__
 #define __PUG_H__
 
-#include <stdbool.h>
+#define PUG_VERSION "1.0"
 
 // --------------------------- CONFIGURATION START ------------------------- //
 
 #ifndef CC
-#define CC "gcc"
+#define CC "cc"
 #endif // CC
 
 // --------------------------- CONFIGURATION END --------------------------- //
 
 // --------------------------- DECLARATIONS START -------------------------- //
+
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Initialize PUG with command-line arguments from main(int argc, char **argv)
+void pug_init(int argc, char **argv);
 
 // Executable build target
 typedef struct {
@@ -73,8 +82,10 @@ typedef struct {
 void exe_build(Exe *exe);
 // Cleanup executable build files
 void exe_clean(Exe *exe);
-// Install executable to its install_dir
+// Install executable to its install_dir. Compile if needed.
 void exe_install(Exe *exe);
+// Run compiled executable. Compile if needed.
+void exe_run(Exe *exe);
 
 // Build library
 void lib_build(Lib *lib);
@@ -84,48 +95,71 @@ void lib_clean(Lib *lib);
 void lib_install(Lib *lib);
 
 // Check for library using its pkg-config name
-// If required is true - exits with code 1.
+// If required is true - exits with code 1 if library is not found.
 void check_library(const char *pkg_config_name, bool required);
+
+// Check command-line arguments for existing argument.
+// e. g. "clean", "--build-static", "-h".
+// 'arg' must be the same as it will be provided to pug executable:
+// "clean" for "./pug clean" or "--build-static" for "./pug --build-static".
+bool get_arg_bool(const char *arg);
+// Get value of "--myarg=value" type argument. e. g. "--prefix=/usr".
+// 'arg' must be in format "--myarg" without "=value" part.
+const char *get_arg_value(const char *arg);
 
 // Get environment variable or default if not defined
 const char *env_or(const char *env, const char *default_val);
 
-// Checks if pug.c was changed and recompiles itself if needed
-void auto_rebuild_pug(int argc, const char **argv);
+#ifdef __cplusplus
+}
+#endif
 
 // ---------------------------- DECLARATIONS END ---------------------------- //
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 // ---------------------------- IMPLEMENTATION START ------------------------ //
 
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <unistd.h>
+
 #include <sys/stat.h>
-#ifdef _WIN32
-#define STAT _stat
-#define PATH_SEP "\\"
-#else
-#define STAT stat
-#define PATH_SEP "/"
-#endif
+#include <sys/wait.h>
+
+// --- MACROS --- //
+
+#define TEXT_GREEN(text) "\033[0;32m" text "\033[0m"
+#define TEXT_RED(text) "\033[0;31m" text "\033[0m"
+
+#define PUG_LOG(format, ...) printf(TEXT_GREEN("[PUG] ") format "\n", ##__VA_ARGS__);
+#define PUG_ERROR(format, ...) printf(TEXT_RED("[PUG ERROR] ") format "\n", ##__VA_ARGS__);
+#define PUG_MALLOC(type, var, size)                                                                                    \
+  type var = (type)malloc(size);                                                                                       \
+  if (!var) {                                                                                                          \
+    PUG_ERROR("Memory allocation error");                                                                              \
+    exit(EXIT_FAILURE);                                                                                                \
+  }
+#define PUG_FREE(...)                                                                                                  \
+  do {                                                                                                                 \
+    void *ptrs[] = {__VA_ARGS__};                                                                                      \
+    size_t count = sizeof(ptrs) / sizeof(ptrs[0]);                                                                     \
+    for (size_t i = 0; i < count; ++i) {                                                                               \
+      if (ptrs[i]) {                                                                                                   \
+        free(ptrs[i]);                                                                                                 \
+      }                                                                                                                \
+    }                                                                                                                  \
+  } while (0)
+
+// --- GLOBAL VARIABLES --- //
+
+int pug_argc;
+char **pug_argv;
 
 // --- PRIVATE UTIL FUNCTIONS --- //
-
-// Log formatted message
-static inline void _log(const char *format, ...) {
-  va_list args;
-  printf("[PUG] ");
-  va_start(args, format);
-  vprintf(format, args);
-  va_end(args);
-  printf("\n");
-}
 
 // Get length of NULL-terminated array
 static inline size_t _get_array_len(const char **arr) {
@@ -147,14 +181,12 @@ static char *_strdup_printf(const char *format, ...) {
   va_end(args);
   if (needed < 0)
     return NULL;
-  char *buffer = (char *)malloc(needed + 1);
-  if (!buffer)
-    return NULL;
+  PUG_MALLOC(char *, buffer, needed + 1);
   va_start(args, format);
   int written = vsnprintf(buffer, needed + 1, format, args);
   va_end(args);
   if (written < 0) {
-    free(buffer);
+    PUG_FREE(buffer);
     return NULL;
   }
   return buffer;
@@ -165,9 +197,7 @@ static inline char *_replace_file_extension(const char *filename, const char *ne
   const char *dot = strrchr(filename, '.');
   size_t basename_len = (dot && dot != filename) ? (size_t)(dot - filename) : strlen(filename);
   size_t new_len = basename_len + 1 + strlen(new_ext) + 1;
-  char *new_filename = (char *)malloc(new_len);
-  if (!new_filename)
-    return NULL;
+  PUG_MALLOC(char *, new_filename, new_len);
   strncpy(new_filename, filename, basename_len);
   new_filename[basename_len] = '\0';
   snprintf(new_filename + basename_len, new_len - basename_len, ".%s", new_ext);
@@ -195,21 +225,17 @@ static bool _file_exists(const char *filename) {
 // Check if file1 was modified after file2
 static bool _file_changed_after(const char *file1, const char *file2) {
   struct stat stat1, stat2;
-  if (STAT(file1, &stat1) != 0 || STAT(file2, &stat2) != 0)
+  if (stat(file1, &stat1) != 0 || stat(file2, &stat2) != 0)
     return false;
   return stat1.st_mtime > stat2.st_mtime;
 }
 
 // Returns a string representing the command-line arguments
-static char *_get_args_as_string(int argc, const char **argv) {
+static char *_get_args_as_string(int argc, char **argv) {
   size_t total_length = 0;
   for (int i = 0; i < argc; i++)
     total_length += strlen(argv[i]) + 1;
-  char *full_cmdline = malloc(total_length);
-  if (!full_cmdline) {
-    _log("Can't allocate memory");
-    exit(EXIT_FAILURE);
-  }
+  PUG_MALLOC(char *, full_cmdline, total_length);
   full_cmdline[0] = '\0';
   for (int i = 0; i < argc; i++) {
     strcat(full_cmdline, argv[i]);
@@ -223,38 +249,26 @@ static char *_get_args_as_string(int argc, const char **argv) {
 static char *_build_obj_files_string(const char **sources) {
   size_t sources_len = _get_array_len(sources);
   size_t total_len = 0;
-  char **objs = malloc(sources_len * sizeof(char *));
-  if (!objs) {
-    _log("Memory allocation failure");
-    exit(EXIT_FAILURE);
-  }
+  PUG_MALLOC(char **, objs, sources_len * sizeof(char *));
   // Build each object file string and compute total length.
   for (size_t i = 0; i < sources_len; i++) {
     objs[i] = _replace_file_extension(sources[i], "o");
-    if (!objs[i]) {
-      _log("Error creating object file name from: %s", sources[i]);
-      exit(EXIT_FAILURE);
-    }
     total_len += strlen(objs[i]) + 1; // plus space
   }
-  char *result = malloc(total_len + 1);
-  if (!result) {
-    _log("Memory allocation failure");
-    exit(EXIT_FAILURE);
-  }
+  PUG_MALLOC(char *, result, total_len + 1);
   result[0] = '\0';
   for (size_t i = 0; i < sources_len; i++) {
     strcat(result, objs[i]);
     strcat(result, " ");
-    free(objs[i]);
+    PUG_FREE(objs[i]);
   }
-  free(objs);
+  PUG_FREE(objs);
   return result;
 }
 
 // Clean all files. if is_exe true then remove the executable itself
 static void _clean_files(const char *name, bool is_exe, const char **files) {
-  _log("Cleanup");
+  PUG_LOG("Cleanup");
   if (is_exe)
     remove(name);
   else {
@@ -264,16 +278,14 @@ static void _clean_files(const char *name, bool is_exe, const char **files) {
     remove(shared_so);
     remove(shared_dll);
     remove(static_a);
-    free(shared_so);
-    free(shared_dll);
-    free(static_a);
+    PUG_FREE(shared_so, shared_dll, static_a);
   }
   size_t len = _get_array_len(files);
   for (size_t i = 0; i < len; i++) {
     char *obj_file = _replace_file_extension(files[i], "o");
     if (obj_file) {
       remove(obj_file);
-      free(obj_file);
+      PUG_FREE(obj_file);
     }
   }
 }
@@ -284,149 +296,224 @@ static void _copy_file(const char *src, const char *dest) {
   system(mkdir_cmd);
   free(mkdir_cmd);
   char *cp_cmd = _strdup_printf("cp \"%s\" \"%s\"", src, dest);
-  _log("%s", cp_cmd);
+  PUG_LOG("%s", cp_cmd);
   int ret = system(cp_cmd);
-  free(cp_cmd);
+  PUG_FREE(cp_cmd);
   if (ret != 0) {
-    _log("Failed to copy '%s' to '%s'", src, dest);
+    PUG_LOG("Failed to copy '%s' to '%s'", src, dest);
     exit(EXIT_FAILURE);
   }
 }
 
+static bool _program_exists(const char *name) {
+  size_t len = strlen(name);
+  char cmd[len + 7];
+  snprintf(cmd, len, "which %s", name);
+  return system(cmd) == 0;
+}
+
+void _auto_rebuild() {
+  if (!_file_exists("pug.c")) {
+    PUG_ERROR("'pug.c' file not found. Auto-rebuild is not possible.");
+    return;
+  }
+  if (!_file_changed_after("pug.c", "pug"))
+    return;
+  PUG_LOG("Rebuilding pug");
+  int ret = system(CC " -o pug pug.c");
+  if (ret != 0) {
+    PUG_ERROR("Error rebuilding 'pug.c'");
+    exit(EXIT_FAILURE);
+  }
+  char *cmd = _get_args_as_string(pug_argc, pug_argv);
+  system(cmd);
+  PUG_FREE(cmd);
+  exit(EXIT_SUCCESS);
+}
+
+// Compile sources.
+// Retuns true if compiled, false if no files was changed.
+bool _compile_sources(const char **sources, const char *cflags, bool is_library) {
+  bool out = false;
+  size_t sources_len = _get_array_len(sources);
+
+  // Get the number of available processors (CPU cores)
+  int num_processors = 1; // Default to 1 if there is an error getting the processor count.
+
+  // For Linux, use sysconf to get the number of processors
+  num_processors = sysconf(_SC_NPROCESSORS_ONLN);
+
+  if (num_processors <= 0) {
+    PUG_ERROR("Error getting the number of processors. Defaulting to 1.");
+    num_processors = 1; // Default to 1 if sysctl, sysconf, or GetSystemInfo fails
+  }
+
+  // Track the number of currently running child processes
+  int active_processes = 0;
+
+  for (size_t i = 0; i < sources_len; ++i) {
+    // Wait for a child process to finish if we have hit the max number of allowed processes
+    if (active_processes >= num_processors) {
+      int status;
+      waitpid(-1, &status, 0); // Wait for any child process to finish
+      active_processes--;
+    }
+
+    pid_t pid = fork(); // Create a new child process
+
+    if (pid == -1) {
+      // Error while forking
+      PUG_ERROR("Error creating process for '%s'", sources[i]);
+      exit(EXIT_FAILURE);
+    } else if (pid == 0) {
+      // Child process - compile source
+      char *source_obj = _replace_file_extension(sources[i], "o");
+      const char *cmd_fmt = "%s%s-c %s -o %s %s";
+      char *cmd = NULL;
+
+      if (_file_exists(source_obj)) {
+        if (_file_changed_after(sources[i], source_obj)) {
+          cmd = _strdup_printf(cmd_fmt, CC, is_library ? " -fPIC " : " ", cflags ? cflags : "", source_obj, sources[i]);
+        }
+      } else {
+        cmd = _strdup_printf(cmd_fmt, CC, is_library ? " -fPIC " : " ", cflags ? cflags : "", source_obj, sources[i]);
+      }
+
+      if (cmd) {
+        PUG_LOG("%s", cmd);
+        int ret = system(cmd);
+        PUG_FREE(cmd);
+        if (ret != 0) {
+          PUG_ERROR("Error while compiling '%s'", sources[i]);
+          exit(EXIT_FAILURE);
+        }
+      }
+
+      PUG_FREE(source_obj);
+      exit(0); // Exit the child process after completion
+    } else {
+      active_processes++; // Increment the active processes count
+    }
+  }
+
+  // Parent process waits for all remaining child processes to finish
+  for (size_t i = 0; i < sources_len; ++i) {
+    int status;
+    waitpid(-1, &status, 0); // Wait for any child process to finish
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+      out = false;
+    } else {
+      out = true;
+    }
+  }
+
+  return out;
+}
+
 // --- FUNCTIONS --- //
+
+// Initialize PUG with command-line arguments from main(int argc, char **argv)
+void pug_init(int argc, char **argv) {
+  pug_argc = argc;
+  pug_argv = argv;
+  _auto_rebuild();
+}
 
 void exe_build(Exe *exe) {
   if (!exe->name) {
-    _log("Executable name is NULL");
+    PUG_LOG("Executable name is NULL");
     exit(EXIT_FAILURE);
   }
-  _log("Compiling executable '%s'", exe->name);
-  size_t sources_len = _get_array_len(exe->sources);
-  bool need_linking = false;
-  for (size_t i = 0; i < sources_len; i++) {
-    const char *source = exe->sources[i];
-    char *source_obj = _replace_file_extension(source, "o");
-    char *cmd = NULL;
-    // Recompile if object file is missing or source is newer than object
-    if (_file_exists(source_obj)) {
-      if (_file_changed_after(source, source_obj))
-        cmd = _strdup_printf("%s -c %s -o %s %s", CC, exe->cflags ? exe->cflags : "", source_obj, source);
-    } else {
-      cmd = _strdup_printf("%s -c %s -o %s %s", CC, exe->cflags ? exe->cflags : "", source_obj, source);
-    }
-    if (cmd) {
-      _log("%s", cmd);
-      int ret = system(cmd);
-      free(cmd);
-      if (ret != 0) {
-        _log("Error while compiling '%s'", source);
-        exit(EXIT_FAILURE);
-      }
-      need_linking = true;
-    }
-    free(source_obj);
-  }
+  PUG_LOG("Compiling executable '%s'", exe->name);
+  bool need_linking = _compile_sources(exe->sources, exe->cflags, false);
   if (!need_linking) {
-    _log("Nothing to compile for executable '%s'", exe->name);
+    PUG_LOG("Nothing to compile for executable '%s'", exe->name);
     return;
   }
-  _log("Linking executable '%s'", exe->name);
+  PUG_LOG("Linking executable '%s'", exe->name);
   char *obj_files = _build_obj_files_string(exe->sources);
   char *cmd = _strdup_printf("%s %s %s -o %s", CC, obj_files, exe->ldflags ? exe->ldflags : "", exe->name);
-  _log("%s", cmd);
+  PUG_LOG("%s", cmd);
   int ret = system(cmd);
-  free(cmd);
-  free(obj_files);
+  PUG_FREE(cmd, obj_files);
   if (ret != 0) {
-    _log("Error while linking '%s'", exe->name);
+    PUG_LOG("Error while linking '%s'", exe->name);
     exit(EXIT_FAILURE);
   }
 }
 
 void exe_clean(Exe *exe) { _clean_files(exe->name, true, exe->sources); }
 
+// Install executable to its install_dir. Compile if needed.
 void exe_install(Exe *exe) {
+  if (!_file_exists(exe->name))
+    exe_build(exe);
   const char *install_dir = exe->install_dir ? exe->install_dir : "/usr/local/bin";
-  _log("Installing executable '%s' to '%s", exe->name, install_dir);
+  PUG_LOG("Installing executable '%s' to '%s", exe->name, install_dir);
   _copy_file(exe->name, install_dir);
+}
+
+// Run compiled executable. Compile if needed.
+void exe_run(Exe *exe) {
+  if (!_file_exists(exe->name))
+    exe_build(exe);
+  PUG_LOG("Running executable '%s'", exe->name);
+  char *cmd = _strdup_printf("./%s", exe->name);
+  system(cmd);
+  PUG_FREE(cmd);
 }
 
 void lib_build(Lib *lib) {
   if (!lib->name) {
-    _log("Library name is NULL");
+    PUG_LOG("Library name is NULL");
     exit(EXIT_FAILURE);
   }
-  _log("Compiling library '%s'", lib->name);
-  size_t sources_len = _get_array_len(lib->sources);
-  bool lib_rebuilt = false;
-  for (size_t i = 0; i < sources_len; i++) {
-    const char *source = lib->sources[i];
-    char *source_obj = _replace_file_extension(source, "o");
-    char *cmd = NULL;
-    if (_file_exists(source_obj)) {
-      if (_file_changed_after(source, source_obj))
-        cmd = _strdup_printf("%s -fPIC -c %s -o %s %s", CC, lib->cflags ? lib->cflags : "", source_obj, source);
-    } else {
-      cmd = _strdup_printf("%s -fPIC -c %s -o %s %s", CC, lib->cflags ? lib->cflags : "", source_obj, source);
-    }
-    if (cmd) {
-      _log("%s", cmd);
-      int ret = system(cmd);
-      free(cmd);
-      if (ret != 0) {
-        _log("Error while compiling '%s'", source);
-        exit(EXIT_FAILURE);
-      }
-      lib_rebuilt = true;
-    }
-    free(source_obj);
-  }
+  PUG_LOG("Compiling library '%s'", lib->name);
+  bool lib_rebuilt = _compile_sources(lib->sources, lib->cflags, true);
   if (!lib_rebuilt) {
-    _log("Nothing to compile for library '%s'", lib->name);
+    PUG_LOG("Nothing to compile for library '%s'", lib->name);
     return;
   }
   // Build shared library
-  _log("Building shared library '%s'", lib->name);
+  PUG_LOG("Building shared library '%s'", lib->name);
   char *obj_files = _build_obj_files_string(lib->sources);
   char *cmd = _strdup_printf("%s -shared -o %s.so %s", CC, lib->name, obj_files);
-  _log("%s", cmd);
+  PUG_LOG("%s", cmd);
   int ret = system(cmd);
-  free(cmd);
+  PUG_FREE(cmd);
   if (ret != 0) {
-    _log("Error while building shared library '%s'", lib->name);
+    PUG_ERROR("Failed while building shared library '%s'", lib->name);
     exit(EXIT_FAILURE);
   }
   // Build static library if requested
   if (lib->build_static) {
-    _log("Building static library '%s'", lib->name);
+    PUG_LOG("Building static library '%s'", lib->name);
     cmd = _strdup_printf("ar rcs %s.a %s", lib->name, obj_files);
-    _log("%s", cmd);
+    PUG_LOG("%s", cmd);
     ret = system(cmd);
     free(cmd);
     if (ret != 0) {
-      _log("Error while building static library '%s'", lib->name);
+      PUG_ERROR("Failed while building static library '%s'", lib->name);
       exit(EXIT_FAILURE);
     }
   }
-  free(obj_files);
+  PUG_FREE(obj_files);
 }
 
 void lib_clean(Lib *lib) { _clean_files(lib->name, false, lib->sources); }
 
 void lib_install(Lib *lib) {
-  _log("Installing library '%s'", lib->name);
+  PUG_LOG("Installing library '%s'", lib->name);
   const char *lib_dir = lib->lib_install_dir ? lib->lib_install_dir : "/usr/local/lib";
   char *shared = _strdup_printf("%s.so", lib->name);
   char *shared_dest = _strdup_printf("%s/%s.so", lib_dir, lib->name);
   _copy_file(shared, shared_dest);
-  free(shared);
-  free(shared_dest);
+  PUG_FREE(shared, shared_dest);
   if (lib->build_static) {
     char *static_lib = _strdup_printf("%s.a", lib->name);
     char *static_dest = _strdup_printf("%s/%s.a", lib_dir, lib->name);
     _copy_file(static_lib, static_dest);
-    free(static_lib);
-    free(static_dest);
+    PUG_FREE(static_lib, static_dest);
   }
   // Install headers if a destination directory is provided.
   if (lib->headers_install_dir) {
@@ -436,30 +523,14 @@ void lib_install(Lib *lib) {
       // Create destination path: headers_install_dir + PATH_SEP + basename(header)
       const char *basename = strrchr(header, '/');
       basename = basename ? basename + 1 : header;
-      char *header_dest = _strdup_printf("%s" PATH_SEP "%s", lib->headers_install_dir, basename);
+      char *header_dest = _strdup_printf("%s"
+                                         "/"
+                                         "%s",
+                                         lib->headers_install_dir, basename);
       _copy_file(header, header_dest);
-      free(header_dest);
+      PUG_FREE(header_dest);
     }
   }
-}
-
-void auto_rebuild_pug(int argc, const char **argv) {
-  if (!_file_exists("pug.c")) {
-    _log("Build file not found. Make sure it's called 'pug.c'.");
-    exit(EXIT_FAILURE);
-  }
-  if (!_file_changed_after("pug.c", "pug"))
-    return;
-  _log("Rebuilding pug");
-  int ret = system(CC " -o pug pug.c");
-  if (ret != 0) {
-    _log("Error rebuilding pug");
-    exit(EXIT_FAILURE);
-  }
-  char *cmd = _get_args_as_string(argc, argv);
-  system(cmd);
-  free(cmd);
-  exit(EXIT_SUCCESS);
 }
 
 const char *env_or(const char *env, const char *default_val) {
@@ -467,24 +538,55 @@ const char *env_or(const char *env, const char *default_val) {
   return val ? val : default_val;
 }
 
+// Check command-line arguments for existing argument.
+// e. g. "clean", "--build-static", "-h".
+// 'arg' must be the same as it will be provided to pug executable:
+// "clean" for "./pug clean" or "--build-static" for "./pug --build-static".
+bool get_arg_bool(const char *arg) {
+  if (pug_argc == 1)
+    return false;
+  for (size_t i = 0; i < pug_argc; ++i)
+    if (!strcmp(pug_argv[i], arg))
+      return true;
+  return false;
+}
+
+// Get value of "--myarg=value" type argument. e. g. "--prefix=/usr".
+// 'arg' must be in format "--myarg" without "=value" part.
+const char *get_arg_value(const char *arg) {
+  if (pug_argc == 1)
+    return NULL;
+  for (size_t i = 0; i < pug_argc; ++i) {
+    const char *argument = strstr(argument, pug_argv[i]);
+    if (argument) {
+      const char *eq = strstr(argument, "=");
+      if (eq)
+        return ++eq;
+    }
+  }
+  return NULL;
+}
+
+// Check for library using its pkg-config name
+// If required is true - exits with code 1 if library is not found.
 void check_library(const char *pkg_config_name, bool required) {
-  printf("[PUG] Checking for installed library: %s ... ", pkg_config_name);
+  if (!_program_exists("pkg-config")) {
+    PUG_ERROR("Program 'pkg-config' is not found. Skipping check for library %s", pkg_config_name);
+    return;
+  }
+  printf(TEXT_GREEN("[PUG]") " Checking for installed library using pkg-config: %s ... ", pkg_config_name);
   char *cmd = _strdup_printf("pkg-config --exists %s", pkg_config_name);
   int res = system(cmd);
-  free(cmd);
+  PUG_FREE(cmd);
   if (res == 0) {
-    printf("\033[0;32mYES\033[0m\n");
+    printf(TEXT_GREEN("YES") "\n");
   } else {
-    printf("\033[0;31mNO\033[0m\n");
+    printf(TEXT_RED("NO") "\n");
     if (required)
       exit(EXIT_FAILURE);
   }
 }
 
 // ---------------------------- IMPLEMENTATION END -------------------------- //
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // __PUG_H__
