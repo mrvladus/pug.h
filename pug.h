@@ -98,6 +98,11 @@ void lib_install(Lib *lib);
 // If required is true - exits with code 1 if library is not found.
 void check_library(const char *pkg_config_name, bool required);
 
+// Copy file from src_file to dest_dir, creating directories if needed.
+void install_file(const char *src_file, const char *dest_dir);
+// Copy directory and all files in it src_dir to dest_dir, creating directories if needed.
+void install_dir(const char *src_dir, const char *dest_dir);
+
 // Check command-line arguments for existing argument.
 // e. g. "clean", "--build-static", "-h".
 // 'arg' must be the same as it will be provided to pug executable:
@@ -130,6 +135,26 @@ const char *env_or(const char *env, const char *default_val);
 #include <sys/stat.h>
 #include <sys/wait.h>
 
+#define RUN_EXE_PREFIX "./"       // For running exe in current dir
+#define EXE_EXT ""                // Linux doesn't have .exe extension for binaries
+#define CHECK_PROGRAM_CMD "which" // Check for program
+#define MKDIR_CMD "mkdir -p"      // Create recursive directories command
+#define CP_FILE_CMD "cp -f"
+#define CP_DIR_CMD "cp -rf"
+
+// --- WINDOWS REDEFINES --- //
+
+#ifdef _WIN32
+
+#define RUN_EXE_PREFIX ""         // For running exe in current dir
+#define EXE_EXT ".exe"            // Windows binaries extension
+#define CHECK_PROGRAM_CMD "where" // Check for program
+#define MKDIR_CMD "mkdir"         // Create recursive directories command
+#define CP_FILE_CMD "copy /Y"
+#define CP_DIR_CMD "xcopy /s /e /h"
+
+#endif // _WIN32
+
 // --- MACROS --- //
 
 #define TEXT_GREEN(text) "\033[0;32m" text "\033[0m"
@@ -141,7 +166,7 @@ const char *env_or(const char *env, const char *default_val);
   type var = (type)malloc(size);                                                                                       \
   if (!var) {                                                                                                          \
     PUG_ERROR("Memory allocation error");                                                                              \
-    exit(EXIT_FAILURE);                                                                                                \
+    PUG_ABORT();                                                                                                       \
   }
 #define PUG_FREE(...)                                                                                                  \
   do {                                                                                                                 \
@@ -153,6 +178,7 @@ const char *env_or(const char *env, const char *default_val);
       }                                                                                                                \
     }                                                                                                                  \
   } while (0)
+#define PUG_ABORT() exit(EXIT_FAILURE)
 
 // --- GLOBAL VARIABLES --- //
 
@@ -268,10 +294,12 @@ static char *_build_obj_files_string(const char **sources) {
 
 // Clean all files. if is_exe true then remove the executable itself
 static void _clean_files(const char *name, bool is_exe, const char **files) {
-  PUG_LOG("Cleanup");
-  if (is_exe)
+  PUG_LOG("Cleanup '%s'", name);
+  if (is_exe) {
+    char *exe = _strdup_printf("%s" EXE_EXT, name);
     remove(name);
-  else {
+    PUG_FREE(exe);
+  } else {
     char *shared_so = _strdup_printf("%s.so", name);
     char *shared_dll = _strdup_printf("%s.dll", name);
     char *static_a = _strdup_printf("%s.a", name);
@@ -290,25 +318,9 @@ static void _clean_files(const char *name, bool is_exe, const char **files) {
   }
 }
 
-// Copy file from src to dest using the cp command.
-static void _copy_file(const char *src, const char *dest) {
-  char *mkdir_cmd = _strdup_printf("mkdir -p \"$(dirname '%s')\"", dest);
-  system(mkdir_cmd);
-  free(mkdir_cmd);
-  char *cp_cmd = _strdup_printf("cp \"%s\" \"%s\"", src, dest);
-  PUG_LOG("%s", cp_cmd);
-  int ret = system(cp_cmd);
-  PUG_FREE(cp_cmd);
-  if (ret != 0) {
-    PUG_LOG("Failed to copy '%s' to '%s'", src, dest);
-    exit(EXIT_FAILURE);
-  }
-}
-
 static bool _program_exists(const char *name) {
-  size_t len = strlen(name);
-  char cmd[len + 7];
-  snprintf(cmd, len, "which %s", name);
+  char cmd[7 + strlen(name)];
+  sprintf(cmd, CHECK_PROGRAM_CMD " %s", name);
   return system(cmd) == 0;
 }
 
@@ -323,7 +335,7 @@ void _auto_rebuild() {
   int ret = system(CC " -o pug pug.c");
   if (ret != 0) {
     PUG_ERROR("Error rebuilding 'pug.c'");
-    exit(EXIT_FAILURE);
+    PUG_ABORT();
   }
   char *cmd = _get_args_as_string(pug_argc, pug_argv);
   system(cmd);
@@ -336,21 +348,15 @@ void _auto_rebuild() {
 bool _compile_sources(const char **sources, const char *cflags, bool is_library) {
   bool out = false;
   size_t sources_len = _get_array_len(sources);
-
   // Get the number of available processors (CPU cores)
   int num_processors = 1; // Default to 1 if there is an error getting the processor count.
-
-  // For Linux, use sysconf to get the number of processors
   num_processors = sysconf(_SC_NPROCESSORS_ONLN);
-
   if (num_processors <= 0) {
     PUG_ERROR("Error getting the number of processors. Defaulting to 1.");
     num_processors = 1; // Default to 1 if sysctl, sysconf, or GetSystemInfo fails
   }
-
   // Track the number of currently running child processes
   int active_processes = 0;
-
   for (size_t i = 0; i < sources_len; ++i) {
     // Wait for a child process to finish if we have hit the max number of allowed processes
     if (active_processes >= num_processors) {
@@ -358,19 +364,16 @@ bool _compile_sources(const char **sources, const char *cflags, bool is_library)
       waitpid(-1, &status, 0); // Wait for any child process to finish
       active_processes--;
     }
-
     pid_t pid = fork(); // Create a new child process
-
     if (pid == -1) {
       // Error while forking
       PUG_ERROR("Error creating process for '%s'", sources[i]);
-      exit(EXIT_FAILURE);
+      PUG_ABORT();
     } else if (pid == 0) {
       // Child process - compile source
       char *source_obj = _replace_file_extension(sources[i], "o");
       const char *cmd_fmt = "%s%s-c %s -o %s %s";
       char *cmd = NULL;
-
       if (_file_exists(source_obj)) {
         if (_file_changed_after(sources[i], source_obj)) {
           cmd = _strdup_printf(cmd_fmt, CC, is_library ? " -fPIC " : " ", cflags ? cflags : "", source_obj, sources[i]);
@@ -378,24 +381,21 @@ bool _compile_sources(const char **sources, const char *cflags, bool is_library)
       } else {
         cmd = _strdup_printf(cmd_fmt, CC, is_library ? " -fPIC " : " ", cflags ? cflags : "", source_obj, sources[i]);
       }
-
       if (cmd) {
         PUG_LOG("%s", cmd);
         int ret = system(cmd);
         PUG_FREE(cmd);
         if (ret != 0) {
           PUG_ERROR("Error while compiling '%s'", sources[i]);
-          exit(EXIT_FAILURE);
+          PUG_ABORT();
         }
       }
-
       PUG_FREE(source_obj);
       exit(0); // Exit the child process after completion
     } else {
       active_processes++; // Increment the active processes count
     }
   }
-
   // Parent process waits for all remaining child processes to finish
   for (size_t i = 0; i < sources_len; ++i) {
     int status;
@@ -406,7 +406,6 @@ bool _compile_sources(const char **sources, const char *cflags, bool is_library)
       out = true;
     }
   }
-
   return out;
 }
 
@@ -422,23 +421,22 @@ void pug_init(int argc, char **argv) {
 void exe_build(Exe *exe) {
   if (!exe->name) {
     PUG_LOG("Executable name is NULL");
-    exit(EXIT_FAILURE);
+    PUG_ABORT();
   }
   PUG_LOG("Compiling executable '%s'", exe->name);
-  bool need_linking = _compile_sources(exe->sources, exe->cflags, false);
-  if (!need_linking) {
+  if (!_compile_sources(exe->sources, exe->cflags, false)) {
     PUG_LOG("Nothing to compile for executable '%s'", exe->name);
     return;
   }
   PUG_LOG("Linking executable '%s'", exe->name);
   char *obj_files = _build_obj_files_string(exe->sources);
-  char *cmd = _strdup_printf("%s %s %s -o %s", CC, obj_files, exe->ldflags ? exe->ldflags : "", exe->name);
+  char *cmd = _strdup_printf("%s %s %s -o %s" EXE_EXT, CC, obj_files, exe->ldflags ? exe->ldflags : "", exe->name);
   PUG_LOG("%s", cmd);
   int ret = system(cmd);
   PUG_FREE(cmd, obj_files);
   if (ret != 0) {
-    PUG_LOG("Error while linking '%s'", exe->name);
-    exit(EXIT_FAILURE);
+    PUG_ERROR("Error while linking '%s'", exe->name);
+    PUG_ABORT();
   }
 }
 
@@ -450,7 +448,9 @@ void exe_install(Exe *exe) {
     exe_build(exe);
   const char *install_dir = exe->install_dir ? exe->install_dir : "/usr/local/bin";
   PUG_LOG("Installing executable '%s' to '%s", exe->name, install_dir);
-  _copy_file(exe->name, install_dir);
+  char *src = _strdup_printf("%s" EXE_EXT, exe->name);
+  install_file(src, install_dir);
+  PUG_FREE(src);
 }
 
 // Run compiled executable. Compile if needed.
@@ -458,7 +458,7 @@ void exe_run(Exe *exe) {
   if (!_file_exists(exe->name))
     exe_build(exe);
   PUG_LOG("Running executable '%s'", exe->name);
-  char *cmd = _strdup_printf("./%s", exe->name);
+  char *cmd = _strdup_printf(RUN_EXE_PREFIX "%s", exe->name);
   system(cmd);
   PUG_FREE(cmd);
 }
@@ -466,7 +466,7 @@ void exe_run(Exe *exe) {
 void lib_build(Lib *lib) {
   if (!lib->name) {
     PUG_LOG("Library name is NULL");
-    exit(EXIT_FAILURE);
+    PUG_ABORT();
   }
   PUG_LOG("Compiling library '%s'", lib->name);
   bool lib_rebuilt = _compile_sources(lib->sources, lib->cflags, true);
@@ -483,7 +483,7 @@ void lib_build(Lib *lib) {
   PUG_FREE(cmd);
   if (ret != 0) {
     PUG_ERROR("Failed while building shared library '%s'", lib->name);
-    exit(EXIT_FAILURE);
+    PUG_ABORT();
   }
   // Build static library if requested
   if (lib->build_static) {
@@ -494,7 +494,7 @@ void lib_build(Lib *lib) {
     free(cmd);
     if (ret != 0) {
       PUG_ERROR("Failed while building static library '%s'", lib->name);
-      exit(EXIT_FAILURE);
+      PUG_ABORT();
     }
   }
   PUG_FREE(obj_files);
@@ -507,12 +507,12 @@ void lib_install(Lib *lib) {
   const char *lib_dir = lib->lib_install_dir ? lib->lib_install_dir : "/usr/local/lib";
   char *shared = _strdup_printf("%s.so", lib->name);
   char *shared_dest = _strdup_printf("%s/%s.so", lib_dir, lib->name);
-  _copy_file(shared, shared_dest);
+  install_file(shared, shared_dest);
   PUG_FREE(shared, shared_dest);
   if (lib->build_static) {
     char *static_lib = _strdup_printf("%s.a", lib->name);
     char *static_dest = _strdup_printf("%s/%s.a", lib_dir, lib->name);
-    _copy_file(static_lib, static_dest);
+    install_file(static_lib, static_dest);
     PUG_FREE(static_lib, static_dest);
   }
   // Install headers if a destination directory is provided.
@@ -527,7 +527,7 @@ void lib_install(Lib *lib) {
                                          "/"
                                          "%s",
                                          lib->headers_install_dir, basename);
-      _copy_file(header, header_dest);
+      install_file(header, header_dest);
       PUG_FREE(header_dest);
     }
   }
@@ -583,7 +583,37 @@ void check_library(const char *pkg_config_name, bool required) {
   } else {
     printf(TEXT_RED("NO") "\n");
     if (required)
-      exit(EXIT_FAILURE);
+      PUG_ABORT();
+  }
+}
+
+// Copy file from src_file to dest_dir, creating directories if needed.
+void install_file(const char *src_file, const char *dest_dir) {
+  PUG_LOG("Install file '%s' to '%s'", src_file, dest_dir);
+  char *mkdir_cmd = _strdup_printf(MKDIR_CMD " %s", dest_dir);
+  int res = system(mkdir_cmd);
+  if (res != 0) {
+    PUG_ERROR("Failed to create directory '%s'", dest_dir);
+    PUG_ABORT();
+  }
+  char *cp_cmd = _strdup_printf(CP_FILE_CMD " %s %s", src_file, dest_dir);
+  res = system(cp_cmd);
+  PUG_FREE(cp_cmd);
+  if (res != 0) {
+    PUG_ERROR("Failed to copy '%s' to directory '%s'", src_file, dest_dir);
+    PUG_ABORT();
+  }
+}
+
+// Copy directory and all files in it src_dir to dest_dir, creating directories if needed.
+void install_dir(const char *src_dir, const char *dest_dir) {
+  PUG_LOG("Install dir '%s' to '%s'", src_dir, dest_dir);
+  char *cp_cmd = _strdup_printf(CP_DIR_CMD " %s %s", src_dir, dest_dir);
+  int res = system(cp_cmd);
+  PUG_FREE(cp_cmd);
+  if (res != 0) {
+    PUG_ERROR("Failed to copy '%s' to directory '%s'", src_dir, dest_dir);
+    PUG_ABORT();
   }
 }
 
