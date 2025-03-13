@@ -111,7 +111,9 @@ bool get_arg_bool(const char *arg);
 // Get value of "--myarg=value" type argument. e. g. "--prefix=/usr".
 // 'arg' must be in format "--myarg" without "=value" part.
 const char *get_arg_value(const char *arg);
-
+// Get value from command-line argument of type "--arg=value" or default if argument is not provided.
+// 'arg' must be in format "--myarg" without "=value" part.
+const char *arg_value_or(const char *argument, const char *default_val);
 // Get environment variable or default if not defined
 const char *env_or(const char *env, const char *default_val);
 
@@ -326,7 +328,7 @@ static bool _program_exists(const char *name) {
 
 void _auto_rebuild() {
   if (!_file_exists("pug.c")) {
-    PUG_ERROR("'pug.c' file not found. Auto-rebuild is not possible.");
+    PUG_ERROR("'pug.c' file is not found. Auto-rebuild is not possible.");
     return;
   }
   if (!_file_changed_after("pug.c", "pug"))
@@ -349,11 +351,11 @@ bool _compile_sources(const char **sources, const char *cflags, bool is_library)
   bool out = false;
   size_t sources_len = _get_array_len(sources);
   // Get the number of available processors (CPU cores)
-  int num_processors = 1; // Default to 1 if there is an error getting the processor count.
+  int num_processors;
   num_processors = sysconf(_SC_NPROCESSORS_ONLN);
   if (num_processors <= 0) {
     PUG_ERROR("Error getting the number of processors. Defaulting to 1.");
-    num_processors = 1; // Default to 1 if sysctl, sysconf, or GetSystemInfo fails
+    num_processors = 1;
   }
   // Track the number of currently running child processes
   int active_processes = 0;
@@ -565,6 +567,15 @@ const char *get_arg_value(const char *arg) {
     }
   }
   return NULL;
+}
+
+// Get value from command-line argument of type "--arg=value" or default if argument is not provided.
+// 'arg' must be in format "--myarg" without "=value" part.
+const char *arg_value_or(const char *arg, const char *default_val) {
+  const char *val = get_arg_value(arg);
+  if (val)
+    return val;
+  return default_val;
 }
 
 // Check for library using its pkg-config name
