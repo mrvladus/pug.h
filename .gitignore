@@ -1,7 +1,6 @@
 *.o
 *.a
-*so
+*.so
+*.dll
 pug
-examples/hello-world/hello-world
-examples/incremental/incremental
-examples/library/testlibadd
+examples/test

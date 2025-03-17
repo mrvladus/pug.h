@@ -11,6 +11,7 @@ PUG.H requires only a C compiler to build itself, making it lightweight and stra
 - **No Dependencies**: Requires only a C compiler.
 - **Easy to Use**: Simple syntax to create your builds.
 - **Incremental Builds**: PUG rebuilds only changed source files for fast incremental compilation.
+- **Self-rebuild**: If build file `pug.c` changes - it will rebuild itself.
 
 ## Getting Started
 
@@ -23,19 +24,28 @@ PUG.H requires only a C compiler to build itself, making it lightweight and stra
 1. Copy `pug.h` to your project directory.
 2. Create a build file named `pug.c`:
 
-Here’s a simple example of how to use PUG.H in your project:
+Here’s a simplest example of how to use PUG.H in your project:
 
 ```c
-#define CC "clang" // You can change the C compiler using this. "cc" is the default.
 #include "pug.h"
 
-// TODO
+Target main_exe = {
+    .type = TARGET_EXE,
+    .name = "main",
+    .sources = STRINGS("main.c"),
+};
+
+int main(int argc, char **argv) {
+  pug_init(argc, argv);
+  pug_build_target(&main_exe);
+  return 0;
+}
 ```
 
 3. Build `pug` with `gcc -o pug pug.c`
 4. Run `./pug` to build your project
-5. Run `./pug clean` to clean up the build files
-6. Run `./pug install` to install executable
+
+For more - see inside `pug.h` file and [examples](examples) directory.
 
 ## License
 
