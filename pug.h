@@ -18,8 +18,8 @@ typedef struct Target Target;
 struct Target {
   const TargetType type;           // Type of build target
   const char *name;                // Name of executable or library
-  const char **sources;            // List of source files. Use FILES() macro.
-  const char **headers;            // List of header files. Use FILES() macro.
+  const char **sources;            // List of source files. Use STRINGS() macro.
+  const char **headers;            // List of header files. Use STRINGS() macro.
   const char *cflags;              // Compiler flags
   const char *ldflags;             // Linker flags
   const char *install_bin_dir;     // Directory to install executable. e. g /usr/bin
@@ -28,9 +28,9 @@ struct Target {
   Target **dep_targets;            // List of Targets that this target depends on. These will be built first.
 };
 // Macro for setting list of files e. g. sources and headers
-#define FILES(...) ((const char *[]){__VA_ARGS__, NULL})
+#define STRINGS(...) ((const char *[]){__VA_ARGS__, NULL})
 // Macro for setting list of Targets
-#define TARGETS(...) ((const Target *[]){__VA_ARGS__, NULL})
+#define TARGETS(...) ((Target *[]){__VA_ARGS__, NULL})
 // Initialize PUG
 void pug_init(int argc, char **argv);
 // Build target
@@ -55,6 +55,9 @@ const char *pug_env_or(const char *env, const char *default_val);
 void install_file(const char *src_file, const char *dest_dir);
 // Copy directory and all files in it src_dir to dest_dir, creating directories if needed.
 void install_dir(const char *src_dir, const char *dest_dir);
+// Check if libraries is installed using pkg-config.
+// 'libs' is NULL-terminated array of strings. Use STRINGS() macro.
+bool check_libs(const char **libs);
 
 #ifdef PUG_IMPLEMENTATION
 
@@ -73,6 +76,7 @@ void install_dir(const char *src_dir, const char *dest_dir);
 #define TEXT_GREEN(text) "\033[0;32m" text "\033[0m"
 #define TEXT_YELLOW(text) "\033[0;33m" text "\033[0m"
 #define TEXT_RED(text) "\033[0;31m" text "\033[0m"
+#define TEXT_CYAN(text) "\033[0;36m" text "\033[0m"
 #define PUG_LOG(format, ...) printf(TEXT_GREEN("[PUG] ") format "\n", ##__VA_ARGS__)
 #define PUG_ERROR(format, ...)                                                                                         \
   {                                                                                                                    \
@@ -92,11 +96,13 @@ void install_dir(const char *src_dir, const char *dest_dir);
 #define COMMAND(format, ...)                                                                                           \
   do {                                                                                                                 \
     char *_cmd = _strdup_printf(format, __VA_ARGS__);                                                                  \
-    PUG_LOG("%s", _cmd);                                                                                               \
+    printf(TEXT_CYAN("[PUG COMMAND] ") "%s\n", _cmd);                                                                  \
     if (system(_cmd) != 0)                                                                                             \
       exit(EXIT_FAILURE);                                                                                              \
     free(_cmd);                                                                                                        \
   } while (0);
+#define LIB_INSTALLED(lib) (system("pkg-config --check " lib) == 0)
+#define PROGRAM_EXISTS(program) (system("which " program " > /dev/null") == 0)
 
 // ---------- GLOBAL VARIABLES ---------- //
 
@@ -211,6 +217,7 @@ void pug_build_target(Target *tgt) {
       pug_build_target(tgt->dep_targets[i]);
   PUG_ASSERT(tgt->name);
   PUG_ASSERT(tgt->sources);
+  PUG_LOG("Building target '%s'", tgt->name);
   bool compiled = false;
   for (size_t i = 0; tgt->sources[i]; ++i) {
     const char *source = tgt->sources[i];
@@ -230,14 +237,17 @@ void pug_build_target(Target *tgt) {
   char *obj_files = _build_obj_files_string(tgt->sources);
   // Link executable
   if (tgt->type & TARGET_EXE) {
+    PUG_LOG("Linking executable '%s'", tgt->name);
     COMMAND(CC " %s %s -o %s", obj_files, tgt->ldflags ? tgt->ldflags : "", tgt->name);
   }
   // Build shared library
-  else if (tgt->type & TARGET_SHARED_LIB) {
+  if (tgt->type & TARGET_SHARED_LIB) {
+    PUG_LOG("Building shared library '%s'", tgt->name);
     COMMAND(CC " -shared -o %s.so %s", tgt->name, obj_files);
   }
   // Build static library
-  else if (tgt->type & TARGET_STATIC_LIB) {
+  if (tgt->type & TARGET_STATIC_LIB) {
+    PUG_LOG("Building static library '%s'", tgt->name);
     COMMAND("ar rcs %s.a %s", tgt->name, obj_files);
   }
   free(obj_files);
@@ -260,6 +270,12 @@ void pug_install_target(Target *tgt) {
     PUG_ASSERT(tgt->install_lib_dir);
     COMMAND("cp -f %s.{a} %s", tgt->name, tgt->install_lib_dir);
   }
+}
+// Run target. Runs only if tgt->type is TARGET_EXE.
+void pug_run_target(Target *tgt) {
+  PUG_ASSERT(tgt->name);
+  COMMAND("./%s", tgt->name);
+  exit(EXIT_SUCCESS);
 }
 // Clean target build files
 void pug_clean_target(Target *tgt) {
@@ -315,6 +331,28 @@ void install_file(const char *src_file, const char *dest_dir) {
 void install_dir(const char *src_dir, const char *dest_dir) {
   PUG_LOG("Install dir '%s' to '%s'", src_dir, dest_dir);
   COMMAND("cp -rf %s %s", src_dir, dest_dir);
+}
+// Check if libraries is installed using pkg-config.
+// 'libs' is NULL-terminated array of strings. Use STRINGS() macro.
+bool check_libs(const char **libs) {
+  PUG_ASSERT(libs);
+  if (!PROGRAM_EXISTS("pkg-config")) {
+    PUG_LOG("Program " TEXT_CYAN("pkg-config") " is not found. Can't check installed libs.");
+    return false;
+  }
+  bool out = true;
+  for (size_t i = 0; libs[i]; ++i) {
+    printf(TEXT_GREEN("[PUG]") " Checking for " TEXT_CYAN("%s") " ... ", libs[i]);
+    char *cmd = _strdup_printf("pkg-config --exists %s", libs[i]);
+    if (system(cmd) == 0) {
+      printf(TEXT_GREEN("YES") "\n");
+    } else {
+      printf(TEXT_RED("NO") "\n");
+      out = false;
+    }
+    free(cmd);
+  }
+  return out;
 }
 
 #endif // PUG_IMPLEMENTATION
