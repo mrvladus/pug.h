@@ -79,10 +79,8 @@ bool check_libs(const char **libs);
 #define TEXT_CYAN(text) "\033[0;36m" text "\033[0m"
 #define PUG_LOG(format, ...) printf(TEXT_GREEN("[PUG] ") format "\n", ##__VA_ARGS__)
 #define PUG_ERROR(format, ...)                                                                                         \
-  {                                                                                                                    \
-    printf(TEXT_RED("[PUG ERROR] ") format "\n", ##__VA_ARGS__);                                                       \
-    exit(EXIT_FAILURE);                                                                                                \
-  }
+  printf(TEXT_RED("[PUG ERROR] ") format "\n", ##__VA_ARGS__);                                                         \
+  exit(EXIT_FAILURE);
 #define PUG_MALLOC(type, var, size)                                                                                    \
   type var = (type)malloc(size);                                                                                       \
   if (!var)                                                                                                            \
@@ -96,12 +94,11 @@ bool check_libs(const char **libs);
 #define COMMAND(format, ...)                                                                                           \
   do {                                                                                                                 \
     char *_cmd = _strdup_printf(format, __VA_ARGS__);                                                                  \
-    printf(TEXT_CYAN("[PUG COMMAND] ") "%s\n", _cmd);                                                                  \
+    printf(TEXT_CYAN("[PUG CMD] ") "%s\n", _cmd);                                                                      \
     if (system(_cmd) != 0)                                                                                             \
       exit(EXIT_FAILURE);                                                                                              \
     free(_cmd);                                                                                                        \
   } while (0);
-#define LIB_INSTALLED(lib) (system("pkg-config --check " lib) == 0)
 #define PROGRAM_EXISTS(program) (system("which " program " > /dev/null") == 0)
 
 // ---------- GLOBAL VARIABLES ---------- //
