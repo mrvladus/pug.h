@@ -1,4 +1,9 @@
-# <img src="logo.png" alt="pug.h logo" width="250"/> pug.h
+<div align="center">
+  <img src="logo.png" width="200">
+
+# pug.h
+
+</div>
 
 **pug.h** is a stupidly simple build system designed for C/C++ projects.
 It consists of a single header file that you can easily copy into your project.
