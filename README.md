@@ -1,8 +1,8 @@
-# PUG.H
+# <img src="logo.png" alt="pug.h logo" width="250"/> pug.h
 
-PUG.H is a stupidly simple build system designed for small C/C++ projects.
+**pug.h** is a stupidly simple build system designed for C/C++ projects.
 It consists of a single header file that you can easily copy into your project.
-PUG.H requires only a C compiler to build itself, making it lightweight and straightforward to use.
+**pug.h** requires only a C compiler to build itself, making it lightweight and straightforward to use.
 
 ## Features
 
@@ -24,20 +24,21 @@ PUG.H requires only a C compiler to build itself, making it lightweight and stra
 1. Copy `pug.h` to your project directory.
 2. Create a build file named `pug.c`:
 
-Here’s a simplest example of how to use PUG.H in your project:
+Here’s a simplest example of how to use **pug.h** in your project:
 
 ```c
 #include "pug.h"
 
-Target main_exe = {
-    .type = TARGET_EXE,
-    .name = "main",
-    .sources = STRINGS("main.c"),
-};
+static bool build_hello() {
+    PugTarget hello_bin = pug_target_new("hello", PUG_TARGET_TYPE_EXECUTABLE, "build");
+    pug_target_add_sources(&hello_bin, "src/main.c", NULL);
+    pug_target_add_cflags(&hello_bin, "-Wall", "-Wextra", NULL);
+    return pug_target_build(&hello_bin);
+}
 
 int main(int argc, char **argv) {
   pug_init(argc, argv);
-  pug_build_target(&main_exe);
+  if(!build_hello()) return 1;
   return 0;
 }
 ```

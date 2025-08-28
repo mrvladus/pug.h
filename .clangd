@@ -1,6 +1,6 @@
 CompileFlags:
   Add:
-  - -x
-  - c
-  - -DPUG_IMPLEMENTATION
-  - -Wno-macro-redefined
+    - -x
+    - c
+    - -Wno-macro-redefined
+    - -DPUG_IMPLEMENTATION
