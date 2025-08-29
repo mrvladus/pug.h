@@ -46,9 +46,9 @@ int main(int argc, char **argv) {
     // Build directory will be created if it doesn't exist.
     PugTarget hello_bin = pug_target_new("hello", PUG_TARGET_TYPE_EXECUTABLE, "build");
     // Add sources files.
-    pug_target_add_sources(&hello_bin, "src/main.c", NULL);
+    pug_target_add_source(&hello_bin, "src/main.c");
     // Add compiler flags.
-    pug_target_add_cflags(&hello_bin, "-Wall", "-Wextra", NULL);
+    pug_target_add_cflags(&hello_bin, "-Wall", "-Wextra");
     // Build target executable.
     if(!pug_target_build(&hello_bin)) return 1;
 
