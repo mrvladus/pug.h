@@ -4,3 +4,4 @@
 *.dll
 pug
 examples/test
+build/

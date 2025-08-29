@@ -1,30 +1,21 @@
 #define PUG_IMPLEMENTATION
 #include "../pug.h"
 
-// Test library. Shared and static.
-Target libtest = {
-    .type = TYPE_SHARED_LIB | TYPE_STATIC_LIB,
-    .name = "libtest",
-    .cflags = "-Wall -Wextra",
-    .sources = STRINGS("libtest.c"),
-};
-
-// Test executable. With dependency on libtest target.
-Target test_exe = {
-    .type = TYPE_EXE,
-    .name = "test",
-    .cflags = "-Wall -Wextra ",
-    .ldflags = "-L. -ltest -Wl,-rpath,.",
-    .sources = STRINGS("test.c"),
-    .dep_targets = TARGETS(&libtest),
-};
-
 int main(int argc, char **argv) {
   pug_init(argc, argv);
-  if (pug_get_bool_arg("--clean")) {
-    pug_target_clean(&test_exe);
-    return 0;
-  }
-  pug_target_build(&test_exe);
+
+  // Test library. Static.
+  PugTarget libtest = pug_target_new("libtest", PUG_TARGET_TYPE_STATIC_LIBRARY, "build");
+  pug_target_add_sources(&libtest, "libtest.c", NULL);
+  pug_target_add_cflags(&libtest, "-Wall", "-Wextra", NULL);
+  if (!pug_target_build(&libtest)) return 1;
+
+  // Test executable. With dependency on libtest.
+  PugTarget test = pug_target_new("test", PUG_TARGET_TYPE_EXECUTABLE, "build");
+  pug_target_add_sources(&test, "test.c", NULL);
+  pug_target_add_cflags(&test, "-Wall", "-Wextra", NULL);
+  pug_target_add_ldflags(&test, "-Lbuild", "-ltest", NULL);
+  if (!pug_target_build(&test)) return 1;
+
   return 0;
 }
