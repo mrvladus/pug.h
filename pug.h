@@ -39,15 +39,27 @@ void pug_target_add_source(PugTarget *target, const char *source);
 
 // Add C flag to `target`.
 void pug_target_add_cflag(PugTarget *target, const char *cflag);
-// Add cflags to `target`. Convinience macro.
+// Add multiple cflags to `target`. Convinience macro.
 #define pug_target_add_cflags(target_ptr, ...)                                                                         \
   for (const char *_s[] = {__VA_ARGS__, NULL}, **_p = _s; *_p; pug_target_add_cflag(target_ptr, *_p), _p++)
+// Convert `define` to "-Ddefine".
+// For example we have macro:
+// #define ENABLE_FEATURE
+// Using this will turn it into "-DENABLE_FEATURE".
+#define PUG_CFLAG_DEFINE(define) "-D" #define
+// Convert `define` to "-Ddefine='"<define value>"'".
+// For example we have macro:
+// #define VERSION "1.0"
+// Using this will turn it into "-DVERSION='\"1.0\"'"
+#define PUG_CFLAG_DEFINE_STR(define) "-D" #define "='\"" define "\"'"
 
 // Add linker flag to `target`.
 void pug_target_add_ldflag(PugTarget *target, const char *ldflag);
-// Add ldflags to `target`. Convinience macro.
+// Add multiple ldflags to `target`. Convinience macro.
 #define pug_target_add_ldflags(target_ptr, ...)                                                                        \
   for (const char *_s[] = {__VA_ARGS__, NULL}, **_p = _s; *_p; pug_target_add_ldflag(target_ptr, *_p), _p++)
+#define PUG_LDFLAG_LIB_DIR(path) "-L" path
+#define PUG_LDFLAG_LIB(libname)  "-l" libname
 
 // Add pkg-config library name to `target`.
 void pug_target_add_pkg_config_lib(PugTarget *target, const char *pkg_config_lib);
@@ -71,29 +83,21 @@ bool pug_arg_bool(const char *arg);
 
 // ---------- HELPFUL MACROS ---------- //
 
-// Convert `define` to "-Ddefine".
-// For example we have macro:
-// #define ENABLE_FEATURE
-// Using this will turn it into "-DENABLE_FEATURE".
-// Use in pug_target_add_cflags().
-#define PUG_CFLAG_FROM_DEFINE(define) "-D" #define
-
-// Convert `define` to "-Ddefine='"<define value>"'".
-// For example we have macro:
-// #define VERSION "1.0"
-// Using this will turn it into "-DVERSION='\"1.0\"'"
-// Use in pug_target_add_cflags().
-#define PUG_CFLAG_FROM_DEFINE_STR(define) "-D" #define "='\"" define "\"'"
-
 // ---------- DEBUG ---------- //
 
 #define pug_log(fmt, ...) fprintf(stderr, "[PUG] " fmt "\n", ##__VA_ARGS__)
+
+#define pug_error(fmt, ...)                                                                                            \
+  do {                                                                                                                 \
+    fprintf(stderr, "[PUG ERROR] " fmt "\n", ##__VA_ARGS__);                                                           \
+    exit(EXIT_FAILURE);                                                                                                \
+  } while (0)
 
 #define pug_assert(condition)                                                                                          \
   do {                                                                                                                 \
     if (!(condition)) {                                                                                                \
       pug_log("%s:%d:%s: ASSERT FAILED: " #condition, __FILE__, __LINE__, __func__);                                   \
-      abort();                                                                                                         \
+      exit(EXIT_FAILURE);                                                                                              \
     }                                                                                                                  \
   } while (0)
 
@@ -101,7 +105,7 @@ bool pug_arg_bool(const char *arg);
   do {                                                                                                                 \
     if (!(condition)) {                                                                                                \
       pug_log("%s:%d:%s: ASSERT FAILED: " #condition ". " message, __FILE__, __LINE__, __func__);                      \
-      abort();                                                                                                         \
+      exit(EXIT_FAILURE);                                                                                              \
     }                                                                                                                  \
   } while (0)
 
@@ -494,6 +498,7 @@ bool pug_arg_bool(const char *arg) {
 static bool pug__build_object_files(PugTarget *target, bool *need_linking) {
   for (size_t i = 0; i < target->sources.size; i++) {
     const char *source_file = target->sources.data[i];
+    if (!pug__file_exists(source_file)) pug_error("Source file does not exist: %s", source_file);
     // Convert path/to/source.c -> path_to_source.c to avoid collisions
     const char *source_file_mangled = pug__replace_char(source_file, '/', '_');
     const char *obj_file = pug__sprintf("%s/%s", target->build_dir, pug__replace_ext(source_file_mangled, "o"));
@@ -509,7 +514,6 @@ static bool pug__build_object_files(PugTarget *target, bool *need_linking) {
     // Build obj file if needed
     if (source_needs_build) {
       *need_linking = true;
-      pug_log("%s -> %s", source_file, obj_file);
       const char *cflags = pug__array_to_string(&target->cflags, " ");
       const char *pkg_config_libs = pug__array_to_string(&target->pkg_config_libs, " ");
       // Add pkg-config cflags if needed
