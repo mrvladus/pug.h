@@ -62,4 +62,4 @@ For more - see inside `pug.h` file and [examples](examples) directory.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+This project is licensed under the Zlib License. See the [LICENSE](LICENSE) file for more details.
