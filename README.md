@@ -12,7 +12,6 @@ It requires **only** a C compiler to build itself, making it portable, lightweig
 ## Features
 
 - **Single Header File**: Just copy `pug.h` to your project.
-- **Tiny**: Less than 600 lines of code.
 - **No Dependencies**: Requires only a C compiler.
 - **Easy to Use**: Simple syntax to create your builds.
 - **Incremental Builds**: PUG rebuilds only changed source files for fast incremental compilation.
